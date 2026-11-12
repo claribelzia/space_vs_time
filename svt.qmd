@@ -1,0 +1,755 @@
+---
+title: "svt_quarto"
+format: html
+server: shiny
+editor: 
+markdown: 
+wrap: 72
+---
+
+Call packages
+
+```{r}
+
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(lubridate)
+library(stringr)
+library(lme4)
+library(lmerTest)
+
+```
+
+## Climate Data
+
+Retrieve weather data (corrected to remove information rows) and label site names
+
+```{r}
+
+weather_nac <- read_csv("climate/NAC_weather_corrected.csv")
+weather_nac$site <- "NAC"
+
+weather_laf <- read_csv("climate/LAF_weather_corrected.csv")
+weather_laf$site <- "LAF"
+
+weather_hun <- read_csv("climate/HUN_weather_corrected.csv")
+weather_hun$site <- "HUN"
+
+weather_col <- read_csv("climate/COL_weather_corrected.csv")
+weather_col$site <- "COL"
+
+weather_bas <- read_csv("climate/BAS_weather_corrected.csv")
+weather_bas$site <- "BAS"
+
+weather_ker <- read_csv("climate/KER_weather_corrected.csv")
+weather_ker$site <- "KER"
+
+weather_bfl <- read_csv("climate/BFL_weather_corrected.csv")
+weather_bfl$site <- "BFL"
+
+weather_son <- read_csv("climate/SON_weather_corrected.csv")
+weather_son$site <- "SON"
+
+```
+
+```{r}
+NAC_30 <- read.csv("climate/NAC30.csv")
+NAC_30$site <- "NAC"
+
+LAF_30 <- read.csv("climate/LAF30.csv")
+LAF_30$site <- "LAF"
+
+HUN_30 <- read.csv("climate/HUN30.csv")
+HUN_30$site <- "HUN"
+
+COL_30 <- read.csv("climate/COL30.csv")
+COL_30$site <- "COL"
+
+BAS_30 <- read.csv("climate/BAS30.csv")
+BAS_30$site <- "BAS"
+
+KER_30 <- read.csv("climate/KER30.csv")
+KER_30$site <- "KER"
+
+BFL_30 <- read.csv("climate/BFL30.csv")
+BFL_30$site <- "BFL"
+
+SON_30 <- read.csv("climate/SON30.csv")
+SON_30$site <- "SON"
+```
+
+*Key: s = space variable group, t = time variable group*
+
+Combined climate space (range limit) dataframes
+
+- Converted values in year column to numeric values instead of characters
+
+- Created a new column for the census years
+
+- Changed the census year column based on the month of that row
+
+```{r}
+climate_s <- rbind(weather_bas, weather_bfl, weather_col, weather_hun, weather_ker, weather_laf, weather_son)
+
+climate_s <- separate(climate_s, Date, c('year', 'month'), sep = "-",remove = TRUE)
+
+climate_s$year <- as.numeric(climate_s$year)
+
+climate_s$month <- as.numeric(climate_s$month)
+
+climate_s$year <- as.numeric(climate_s$year)
+
+climate_s$month <- as.numeric(climate_s$month)
+
+climate_s$census_year <- climate_s$year
+
+climate_s$census_year <- if_else(climate_s$month < 5, climate_s$year - 1, climate_s$year)
+
+climate_s <- filter(climate_s, census_year < 2026)
+```
+
+Scrub range limit climate data
+
+- First make it wide
+
+- Then make annual values
+
+```{r}
+climate_s_wide <- pivot_wider(climate_s %>% select(- year),
+                             names_from = c(month),
+                             values_from = c(`tmean (degrees F)`, `ppt (inches)`)) %>% 
+  
+  rowwise() %>% 
+  mutate(ann_mean_temp = mean(c_across(`tmean (degrees F)_4`:`tmean (degrees F)_3`), na.rm = TRUE),
+         spring_mean_temp = mean(c_across(c(`tmean (degrees F)_5`,`tmean (degrees F)_4`,`tmean (degrees F)_3`,`tmean (degrees F)_2`))),
+         ann_sum_precip = sum(c_across((`ppt (inches)_4`:`ppt (inches)_3`)), na.rm = TRUE),
+         spring_sum_precip = sum(c_across(c(`ppt (inches)_5`,`ppt (inches)_4`,`ppt (inches)_3`,`ppt (inches)_2`))))
+
+
+#table(climate_s_wide$site,climate_s_wide$census_year)
+#table(climate_t_wide$site,climate_t_wide$census_year)
+
+#climate_s_wide |> filter(is.na(census_year))
+```
+
+Created time (long term data) dataframes
+
+- Converted values in year column to numeric values instead of characters
+
+- Created a new column for the census years
+
+- Changed the census year column based on the month of that row (same as above)
+
+- Filtered s climate data to only include the relevant census years
+
+```{r}
+
+climate_t <- weather_nac
+climate_t <- separate(climate_t, Date, c('year', 'month'), sep = "-",remove = TRUE)
+climate_t$year <- as.numeric(climate_t$year)
+climate_t$month <- as.numeric(climate_t$month)
+climate_t$census_year <- climate_t$year
+climate_t$census_year <- if_else(climate_t$month < 5, climate_t$year - 1, climate_t$year)
+climate_t_clean <- filter(climate_t, census_year > 2007, census_year < 2022)
+
+```
+
+Widened long term climate data
+
+```{r}
+climate_t_wide <- pivot_wider(climate_t_clean %>% select(-year),
+                              names_from = c(month),
+                              values_from = c(`tmean (degrees F)`, `ppt (inches)`))  %>% 
+
+  rowwise() %>% 
+  mutate(ann_mean_temp = mean(c_across(`tmean (degrees F)_5`:`tmean (degrees F)_4`), na.rm = TRUE),
+         spring_mean_temp = mean(c_across(c(`tmean (degrees F)_5`,`tmean (degrees F)_4`,`tmean (degrees F)_3`,`tmean (degrees F)_2`))),
+         ann_sum_precip = sum(c_across((`ppt (inches)_5`:`ppt (inches)_4`)), na.rm = TRUE),
+         spring_sum_precip = sum(c_across(c(`ppt (inches)_5`,`ppt (inches)_4`,`ppt (inches)_3`,`ppt (inches)_2`))))
+
+```
+
+Extract yearly values from 30yr norms
+
+```{r}
+NAC_30_ann <- NAC_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+
+BAS_30_ann <- BAS_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+
+BFL_30_ann <- BFL_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+
+COL_30_ann <- COL_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+
+HUN_30_ann <- HUN_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+
+KER_30_ann <- KER_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+
+LAF_30_ann <- LAF_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+
+SON_30_ann <- SON_30 |> 
+  filter(Date == "Annual") |> 
+  select(- Date)
+```
+
+Create dataframes with 30yr norms
+
+```{r}
+s_30 <- rbind(BAS_30_ann, 
+              BFL_30_ann, 
+              COL_30_ann, 
+              HUN_30_ann, 
+              KER_30_ann, 
+              LAF_30_ann, 
+              SON_30_ann) |> 
+  rename(ppt_30 = ppt..inches.) |> 
+  rename(temp_30 = tmean..degrees.F.)
+```
+
+```{r}
+t_30 <- NAC_30_ann |> 
+  rename(ppt_30 = ppt..inches.) |> 
+  rename(temp_30 = tmean..degrees.F.)
+```
+
+Combine spatial 30yr data with yearly annual data
+
+```{r}
+climate_s_wide_30 <- left_join(climate_s_wide, s_30, by = join_by(site))
+```
+
+Combine temporal 30yr data with yearly annual data
+
+```{r}
+climate_t_wide_30 <- left_join(climate_t_wide, t_30, by = join_by(site))
+```
+
+Create columns in spatial data with divergences from 30yr norms
+
+```{r}
+climate_s_wide_30 <- climate_s_wide_30 |> 
+  mutate(ppt_diff = ann_sum_precip - ppt_30) |> 
+  mutate(temp_diff = ann_mean_temp - temp_30) 
+```
+
+Create columns in temporal data with divergences from 30yr norms
+
+```{r}
+climate_t_wide_30 <- climate_t_wide_30 |> 
+  mutate(ppt_diff = ann_sum_precip - ppt_30) |> 
+  mutate(temp_diff = ann_mean_temp - temp_30)
+```
+
+## Plant & Endophyte Data
+
+Read in dataframes from range limits data
+
+- First the initial plant data (this has the specific plant IDs and endophyte status of plants)
+
+- Then the census data from 2023, 2024, 2025, and 2026 (this has data on plant vitals)
+
+```{r}
+initial_plants_s <- read.csv("range_limits/endo_range_limits_experiment.xlsx - Initial Plant Data.csv") 
+census_2023_s <- read.csv("range_limits/endo_range_limits_experiment.xlsx - 2023 Data Census.csv")
+census_2024_s <- read.csv("range_limits/endo_range_limits_experiment.xlsx - 2024 Data Census.csv")
+census_2025_s <- read.csv("range_limits/endo_range_limits_experiment.xlsx - 2025 Data Census.csv")
+census_2026_s <- read.csv("range_limits/endo_range_limits_experiment.xlsx - 2026 Data Census.csv")
+```
+
+Corrected structure of column data (character vs integer) so that columns that need to be joined are consistent structure types
+
+```{r}
+str(initial_plants_s)
+str(census_2023_s)
+str(census_2024_s)
+str(census_2025_s)
+str(census_2026_s)
+initial_plants_s$Tag_ID <- as.character(initial_plants_s$Tag_ID)
+census_2023_s$Tag_ID <- as.character(census_2023_s$Tag_ID)
+census_2024_s$Tag_ID <- as.character(census_2024_s$Tag_ID)
+census_2025_s$Tag_ID <- as.character(census_2025_s$Tag_ID)
+census_2026_s$Tag_ID <- as.character(census_2026_s$Tag_ID)
+census_2026_s$Tiller_26 <- as.integer(census_2026_s$Tiller_26)
+```
+
+Relabel columns so they are identifiable with each year they belong to
+
+```{r}
+
+census_2023_s <- census_2023_s %>% 
+  rename(Spikelet_A_23 = Spikelet_A) %>%
+  rename(Spikelet_B_23 = Spikelet_B) %>%
+  rename(Spikelet_C_23 = Spikelet_C) 
+
+census_2023_s <- census_2023_s %>% 
+  rename(tiller_Herb_23 = tiller_Herb) %>%
+  rename(Date_23 = Date) %>%
+  rename(Notes_23 = Notes) 
+
+census_2024_s <- census_2024_s %>% 
+  rename(Spikelet_A_24 = Spikelet_A) %>%
+  rename(Spikelet_B_24 = Spikelet_B) %>%
+  rename(Spikelet_C_24 = Spikelet_C) %>% 
+  rename(tiller_Herb_24 = tiller_Herb) %>%
+  rename(Date_24 = Date) %>%
+  rename(Stroma_24 = Stroma) %>%
+  rename(Notes_24 = Notes) 
+
+census_2025_s <- census_2025_s %>% 
+  rename(Spikelet_A_25 = Spikelet_A) %>%
+  rename(Spikelet_B_25 = Spikelet_B) %>%
+  rename(Spikelet_C_25 = Spikelet_C) %>% 
+  rename(tiller_Herb_25 = tiller_Herb) %>%
+  rename(Date_25 = Date) %>%
+  rename(Stroma_25 = Stroma) %>%
+  rename(Samples_25 = Samples) %>%
+  rename(Notes_25 = Notes) 
+
+census_2026_s <- census_2026_s %>% 
+  rename(Spikelet_A_26 = Spikelet_A) %>%
+  rename(Spikelet_B_26 = Spikelet_B) %>%
+  rename(Spikelet_C_26 = Spikelet_C) %>% 
+  rename(tiller_Herb_26 = tiller_Herb) %>%
+  rename(Date_26 = Date) %>%
+  rename(Stroma_26 = Stroma) %>%
+  rename(Samples_26 = Samples) %>%
+  rename(Notes_26 = Notes) %>% 
+  rename(QAQC_26 = QAQC)
+
+
+```
+
+Creating transition year format dataframe
+
+- First need to make pairs of year data (year t + year t1)
+
+```{r}
+plants_s_23 <- left_join(initial_plants_s, census_2023_s, by = join_by(Tag_ID))
+
+plants_s_cy23_messy <- full_join(plants_s_23, census_2024_s, by = join_by(Tag_ID))
+
+plants_s_cy23 <- plants_s_cy23_messy %>%  
+  select(Site, Species, Tag_ID, Endo, Tiller_23:Spikelet_C_23, Date_23, Tiller_24:Spikelet_C_24, Date_24) %>% 
+  rename(species = Species) %>%
+  rename(site = Site) %>%
+  rename(year_t = Date_23) %>% 
+  rename(year_t1 = Date_24) %>% 
+  rename(tiller_t = Tiller_23) %>% 
+  rename(tiller_t1 = Tiller_24) %>% 
+  rename(inf_t = Inf_23) %>% 
+  rename(attached_inf_t1 = attachedInf_24) %>% 
+  rename(broken_inf_t1 = brokenInf_24) %>% 
+  rename(spike_A_t = Spikelet_A_23) %>% 
+  rename(spike_B_t = Spikelet_B_23) %>% 
+  rename(spike_C_t = Spikelet_C_23) %>% 
+  rename(spike_A_t1 = Spikelet_A_24) %>% 
+  rename(spike_B_t1 = Spikelet_B_24) %>% 
+  rename(spike_C_t1 = Spikelet_C_24) %>% 
+  mutate(inf_t1 = attached_inf_t1 + broken_inf_t1) %>% 
+  select(- c(attached_inf_t1, broken_inf_t1))  
+  
+```
+
+```{r}
+plants_s_24 <- left_join(initial_plants_s, census_2024_s, by = join_by(Tag_ID))
+
+plants_s_cy24_messy <- full_join(plants_s_24, census_2025_s, by = join_by(Tag_ID))
+
+plants_s_cy24 <- plants_s_cy24_messy %>%  
+  select(Site.x, Species.x, Tag_ID, Endo, Tiller_24:Spikelet_C_24, Date_24, Tiller_25:Spikelet_C_25, Date_25) %>% 
+  rename(year_t = Date_24) %>% 
+  rename(year_t1 = Date_25) %>% 
+  rename(species = Species.x) %>%
+  rename(site = Site.x) %>%
+  rename(tiller_t = Tiller_24) %>% 
+  rename(tiller_t1 = Tiller_25) %>% 
+  rename(attached_inf_t = attachedInf_24) %>% 
+  rename(broken_inf_t = brokenInf_24) %>% 
+  rename(attached_inf_t1 = attachedInf_25) %>% 
+  rename(broken_inf_t1 = brokenInf_25) %>% 
+  rename(spike_A_t = Spikelet_A_24) %>% 
+  rename(spike_B_t = Spikelet_B_24) %>% 
+  rename(spike_C_t = Spikelet_C_24) %>% 
+  rename(spike_A_t1 = Spikelet_A_25) %>% 
+  rename(spike_B_t1 = Spikelet_B_25) %>% 
+  rename(spike_C_t1 = Spikelet_C_25) %>% 
+  mutate(inf_t = attached_inf_t + broken_inf_t) %>% 
+  mutate(inf_t1 = attached_inf_t1 + broken_inf_t1) %>% 
+  select(- c(attached_inf_t, broken_inf_t, attached_inf_t1, broken_inf_t1))
+  
+```
+
+```{r}
+plants_s_25 <- left_join(initial_plants_s, census_2025_s, by = join_by(Tag_ID))
+
+plants_s_cy25_messy <- full_join(plants_s_25, census_2026_s, by = join_by(Tag_ID))
+
+plants_s_cy25 <- plants_s_cy25_messy %>%  
+  select(Site.x, Species.x, Tag_ID, Endo, Tiller_25:Spikelet_C_25, Date_25, Tiller_26:Spikelet_C_26, Date_26) %>% 
+  rename(year_t = Date_25) %>% 
+  rename(year_t1 = Date_26) %>% 
+  rename(species = Species.x) %>%
+  rename(site = Site.x) %>%
+  rename(tiller_t = Tiller_25) %>% 
+  rename(tiller_t1 = Tiller_26) %>% 
+  rename(attached_inf_t = attachedInf_25) %>% 
+  rename(broken_inf_t = brokenInf_25) %>% 
+  rename(attached_inf_t1 = attachedInf_26) %>% 
+  rename(broken_inf_t1 = brokenInf_26) %>% 
+  rename(spike_A_t = Spikelet_A_25) %>% 
+  rename(spike_B_t = Spikelet_B_25) %>% 
+  rename(spike_C_t = Spikelet_C_25) %>% 
+  rename(spike_A_t1 = Spikelet_A_26) %>% 
+  rename(spike_B_t1 = Spikelet_B_26) %>% 
+  rename(spike_C_t1 = Spikelet_C_26) %>% 
+  mutate(inf_t = attached_inf_t + broken_inf_t) %>% 
+  mutate(inf_t1 = attached_inf_t1 + broken_inf_t1) %>% 
+  select(- c(attached_inf_t, broken_inf_t, attached_inf_t1, broken_inf_t1))
+
+```
+
+- then adjust date format to be a (numeric) year
+
+```{r}
+plants_s_cy23 %<>% 
+  mutate(year_t = as.integer(substr(year_t, start = 7, stop = 10))) %>% 
+  mutate(year_t1 = as.integer(str_sub(year_t1, start = - 4, end = -1)))
+
+plants_s_cy24 %<>% 
+  mutate(year_t = as.integer(str_sub(year_t, start = - 4, end = -1))) %>% 
+  mutate(year_t1 = as.integer(substr(year_t1, start = 7, stop = 10))) 
+ 
+plants_s_cy25 %<>% 
+  mutate(year_t = as.integer(substr(year_t, start = 7, stop = 10))) %>% 
+  mutate(year_t1 = as.integer(str_sub(year_t1, start = - 4, end = -1)))
+
+```
+
+- then bind transition year format plant data (range limits)
+
+```{r}
+plants_s_trnsyear <- bind_rows(plants_s_cy23, plants_s_cy24, plants_s_cy25)
+
+```
+
+Scrubbed range limit data so it's only including relevant rows (only POAU plants)
+
+```{r}
+plants_s_clean <- plants_s_trnsyear %>% 
+  filter(species == "POAU") 
+
+
+```
+
+Retrieved long term plant data
+
+```{r}
+plants_t <- read_csv("long_term/ltreb_allspp_qaqc.csv")
+plants_t_filtered <- filter(plants_t, species %in% "POAU")
+plants_t_filtered$Site <- "NAC"
+plants_t_clean <- select(plants_t_filtered, species, endo_01, id, year_t, size_t, flw_count_t, year_t1, size_t1, flw_count_t1, Site, surv_t1, mean_spike_t, mean_spike_t1)
+
+```
+
+## Combined Data
+
+Joined range limit climate and plant dataframes
+
+```{r}
+joined_s_messy <- full_join(plants_s_clean, climate_s_wide_30, by = join_by(year_t == census_year, site))
+
+joined_s <- joined_s_messy %>% 
+  rename(endo = Endo) %>% 
+  rename(tag_ID = Tag_ID) %>% 
+  mutate(surv_t1 = case_when(tiller_t1 > 0 ~ 1,
+                             tiller_t1 == 0 ~ 0)) %>%   
+  rowwise() %>% 
+  mutate(mean_spike_t = mean(c_across(c(spike_A_t, spike_B_t, spike_C_t)), na.rm = T), 
+         mean_spike_t1 = mean(c_across(c(spike_A_t1, spike_B_t1, spike_C_t1)), na.rm = T))
+
+
+```
+
+Joined long term climate and plant dataframes
+
+```{r}
+joined_t_messy <- full_join(plants_t_clean, climate_t_wide_30, by = join_by(year_t == census_year, Site == site))
+
+joined_t <- joined_t_messy %>% 
+  rename(endo = endo_01) %>% 
+  rename(tag_ID = id) %>% 
+  rename(site = Site) %>% 
+  rename(tiller_t = size_t) %>% 
+  rename(tiller_t1 = size_t1)
+```
+
+Bind long term and range limit dataframes
+
+```{r}
+working_data <- bind_rows(joined_s %>% 
+                             mutate(data_type="space"), 
+                           joined_t %>% 
+                             mutate(data_type="time"), .id = NULL )
+```
+
+## Plotting (pre-model)
+
+Climate variation on its own
+
+- Annual values
+
+```{r}
+s_t_dense_ppt <- working_data |> 
+  distinct(ann_sum_precip, .keep_all = T) |> 
+  ggplot(aes(x = ann_sum_precip, 
+             fill = data_type)) +
+  geom_histogram(adjust = 1.5, 
+                 alpha = 0.8,
+               color = "lightgray",
+               position = "identity") +
+  scale_fill_manual(values = c("#3b6496", "#0f4a1a")) +
+  xlab("Annual Precipitation (Inches)") +
+  ylab("Frequency") +
+  labs(color = "Variant") + 
+  theme_bw()
+s_t_dense_ppt
+
+
+
+s_t_dense_temp <- working_data %>%
+  distinct(ann_mean_temp, .keep_all = T) %>%
+  ggplot(aes(x = ann_mean_temp, 
+             fill = data_type)) + 
+  geom_histogram(adjust = 1.5, 
+                 alpha = 0.7,
+                 color = "lightgray",
+                 position = "identity") + 
+  scale_fill_manual(values = c("seagreen4", 
+                               "coral")) +
+  xlab("Annual Temperature (F)") +
+  ylab("Frequency") + 
+  labs(color = "Variant") + 
+  theme_bw()
+s_t_dense_temp
+
+working_data |> 
+  select(site,year_t,data_type,ann_sum_precip) |>
+  distinct(ann_sum_precip,.keep_all=T) |> 
+  arrange(ann_sum_precip)
+```
+
+Tiller & temperature:
+
+```{r}
+
+s_t_ann_temp_tiller <- ggplot(working_data, 
+                             aes(x = ann_mean_temp, 
+                                 y = (tiller_t1/tiller_t), 
+                                 color = data_type)) + 
+                       geom_point(size = 4,
+                                  alpha = .3) +
+                       xlab("Annual Temperature (F)") +
+                       ylab("Tiller Growth") +
+                       labs(color = "Variant") + 
+                      scale_color_manual(values = c("#c9730a", "#591e4f")) +
+                      theme_bw()
+s_t_ann_temp_tiller
+
+```
+
+Tiller & precipitation:
+
+```{r}
+
+s_t_ann_ppt_tiller <- ggplot(working_data, 
+                             aes(x = ann_sum_precip, 
+                                 y = (tiller_t1/tiller_t), 
+                                 color = data_type)) + 
+                      geom_point(size = 4,
+                                 alpha = .3) +
+                      xlab("Annual Precipitation (mm)") +
+                      ylab("Tiller Growth") +
+                      labs(color = "Variant") + 
+                      scale_color_manual(values = c("#257d74", "#9abf4b")) +
+                      theme_bw()
+s_t_ann_ppt_tiller
+```
+
+Inflorescence & climate:
+
+```{r}
+s_t_ann_temp_spike <- ggplot(working_data, 
+                             aes(x = ann_mean_temp, 
+                                 y = mean_spike_t1, 
+                                 color = data_type)) + 
+                             geom_point(size = 3,
+                                        alpha = .3) +
+                             xlab("Annual Temperature (F)") +
+                             ylab("Mean Spikelet Count") +
+                             labs(color = "Variant") + 
+                      scale_color_manual(values = c("#257d74", "#78203a")) +
+                      theme_bw()
+s_t_ann_temp_spike
+
+s_t_ann_ppt_spike <- ggplot(working_data, 
+                             aes(x = ann_sum_precip, 
+                                 y = mean_spike_t1, 
+                                 color = data_type)) + 
+                      geom_point(size = 3,
+                                 alpha = .3) +
+                      xlab("Annual Precipitation (mm)") +
+                      ylab("Mean Spikelet Count") +
+                      labs(color = "Variant") + 
+                      scale_color_manual(values = c("#c9730a", "#3f7524")) +
+                      theme_bw()
+s_t_ann_ppt_spike
+```
+
+```{r}
+s_t_ann_temp_surv <- ggplot(working_data, 
+                             aes(x = ann_mean_temp, 
+                                 y = surv_t1, 
+                                 color = data_type)) + 
+  geom_point(size = 3,
+             alpha = .3,
+             position = "jitter") +
+  xlab("Annual Temperature (F)") +
+  ylab("Survival to Year t1") +
+  labs(color = "Variant") + 
+  scale_color_manual(values = c("#257d74", "#78203a")) +
+  theme_bw()
+  
+s_t_ann_temp_surv
+
+
+
+
+
+
+ s_t_ann_ppt_surv <- ggplot(working_data, 
+                            aes(x = ann_sum_precip, 
+                                y = surv_t1, 
+                                color = data_type)) + 
+  geom_point(size = 3,
+             alpha = .3) +
+  xlab("Annual Precipitation (mm)") +
+  ylab("Survival to Year t1") +
+  labs(color = "Variant") + 
+  scale_color_manual(values = c("#257d74", "#3f7524")) +
+  theme_bw()
+s_t_ann_ppt_surv
+
+
+
+```
+
+```{r}
+s_t_ann_temp_endo <- ggplot(working_data, 
+                            aes(x = ann_mean_temp, 
+                                y = endo, 
+                                color = data_type)) + 
+  geom_point(size = 3,
+             alpha = .3) +
+  xlab("Annual Temperature (F)") +
+  ylab("Endophyte Presence") +
+  labs(color = "Variant") + 
+  scale_color_manual(values = c("#78203a", "#c9730a")) +
+  theme_bw()
+s_t_ann_temp_endo
+
+
+
+
+
+
+s_t_ann_ppt_endo <- ggplot(working_data, 
+                           aes(x = ann_sum_precip, 
+                               y = endo, 
+                               color = data_type)) + 
+  geom_point(size = 3,
+             alpha = .3) +
+  xlab("Annual Precipitation (mm)") +
+  ylab("Endophyte Presence") +
+  labs(color = "Variant") + 
+  scale_color_manual(values = c("#257d74", "#3f7524")) +
+  theme_bw()
+s_t_ann_ppt_endo
+```
+
+adding some midpoints...
+
+```{r}
+working_data$precip_bin <- cut_interval(working_data$ann_sum_precip,n=6)
+surv_plot_dat<-working_data %>% 
+  group_by(precip_bin,data_type)  %>% 
+  summarise(mean_surv = mean(surv_t1,na.rm=T),
+            mean_ann_sum_precip = mean(ann_sum_precip,na.rm=T))
+
+ggplot(working_data, 
+       aes(x = ann_sum_precip, 
+           y = surv_t1, 
+           color = data_type)) + 
+  geom_point(size = 3,
+             alpha = .3,
+             position = "jitter", width=0.01,height=0.01) +
+  geom_point(aes(x=surv_plot_dat$mean_ann_sum_precip,y=surv_plot_dat$mean_surv)) +
+  xlab("Annual Precipitation (mm)") +
+  ylab("Survival to Year t1") +
+  labs(color = "Variant") + 
+  scale_color_manual(values = c("#257d74", "#3f7524")) +
+  theme_bw()
+
+plot(jitter(working_data$ann_sum_precip,amount = 0.5),
+     jitter(working_data$surv_t1,amount=0.05),
+     col=alpha("black",.05))
+points(surv_plot_dat$mean_ann_sum_precip[surv_plot_dat$data_type=="space"],
+       surv_plot_dat$mean_surv[surv_plot_dat$data_type=="space"],col="red",pch=16,cex=3)
+points(surv_plot_dat$mean_ann_sum_precip[surv_plot_dat$data_type=="time"],
+       surv_plot_dat$mean_surv[surv_plot_dat$data_type=="time"],col="blue",pch=16,cex=3)
+
+```
+
+## Modelling
+
+GLM model with endophyte presence, precipitation, and interaction effects
+
+```{r}
+glm_endo_ppt <- glmer(surv_t1 ~ 1 + 
+                        scale(tiller_t) + 
+                        scale(ppt_30) + 
+                        scale(ppt_diff) +
+                        endo + 
+                        endo:scale(ppt_30) +
+                        endo:scale(ppt_diff) +
+                        scale(ppt_30):scale(ppt_diff) +
+                        scale(ppt_30):scale(ppt_diff):endo +
+                        (1|site) +
+                        (1|year_t),
+                      data = working_data,
+                      family = "binomial")
+```
+
+Summarize model results
+
+```{r}
+summary(glm_endo_ppt)
+```
+
+```         
+```
